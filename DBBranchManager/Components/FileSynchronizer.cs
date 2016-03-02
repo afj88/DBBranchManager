@@ -1,8 +1,9 @@
-using DBBranchManager.Utils;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text.RegularExpressions;
+using DBBranchManager.Utils;
 
 namespace DBBranchManager.Components
 {
@@ -10,27 +11,34 @@ namespace DBBranchManager.Components
     {
         private readonly string mSourcePath;
         private readonly string mDestinationPath;
-        private readonly Regex mFilter;
+        private readonly Func<string, bool> mFilter;
 
         public FileSynchronizer(string sourcePath, string destinationPath, Regex filter)
+        {
+            mSourcePath = sourcePath;
+            mDestinationPath = destinationPath;
+            mFilter = filter.IsMatch;
+        }
+
+        public FileSynchronizer(string sourcePath, string destinationPath, Func<string, bool> filter)
         {
             mSourcePath = sourcePath;
             mDestinationPath = destinationPath;
             mFilter = filter;
         }
 
-        public IEnumerable<string> Run(ComponentRunState runState)
+        public IEnumerable<string> Run(string action, ComponentRunContext runContext)
         {
             if (Directory.Exists(mSourcePath))
             {
                 if (!Directory.Exists(mDestinationPath))
                 {
                     yield return string.Format("Creating {0}", mDestinationPath);
-                    if (!runState.DryRun)
+                    if (!runContext.DryRun)
                         Directory.CreateDirectory(mDestinationPath);
                 }
 
-                foreach (var f in FileUtils.EnumerateFiles2(mSourcePath, mFilter.IsMatch))
+                foreach (var f in FileUtils.EnumerateFiles2(mSourcePath, mFilter))
                 {
                     var fileName = f.FileName;
                     Debug.Assert(fileName != null, "fileName != null");
@@ -48,7 +56,7 @@ namespace DBBranchManager.Components
                     {
                         yield return string.Format("Copying {0} -> {1}", fileName, mDestinationPath);
 
-                        if (!runState.DryRun)
+                        if (!runContext.DryRun)
                         {
                             if (destFileInfo.Exists && (destFileInfo.Attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly)
                             {

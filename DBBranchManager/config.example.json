@@ -41,12 +41,13 @@
       "deployPath": "E:\\ScriptsSII\\6.1.0"
     }
   },
+  "releasePackagesPath": "E:\\Packages\\",
+  "scriptsPath":  "E:\\ScriptsSII\\",
   "activeBranch": "5.9.1",
   "backupBranch": "Main",
   "executionDelay": 3000,
   "dryRun": false,
   "environment": "dev",
-  "pauseAtStartup": true,
   "beeps": {
     "start": {
       "frequency": 1000,

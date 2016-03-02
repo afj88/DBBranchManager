@@ -1,252 +1,70 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading;
-using System.Threading.Tasks;
 using DBBranchManager.Components;
 using DBBranchManager.Config;
+using DBBranchManager.Constants;
 using DBBranchManager.Dependencies;
-using DBBranchManager.Invalidators;
 using DBBranchManager.Utils;
 
 namespace DBBranchManager
 {
-    internal class Application
+    internal class Application : IDisposable
     {
-        private static readonly Regex ToDeployRegex = new Regex("^(?:to[ _]deploy).*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
+        private readonly CancellationTokenSource mCancellationTokenSource = new CancellationTokenSource();
         private readonly Configuration mConfiguration;
-        private readonly List<DatabaseInfo> mDatabases;
-        private readonly List<IInvalidator> mInvalidators;
-        private readonly Dictionary<string, IComponent> mBranchComponents;
-        private readonly IStatefulDependencyGraph<IComponent> mDependencyGraph;
-        private readonly string mActiveBranch;
-        private readonly string mBackupBranch;
-        private readonly Timer mDelayTimer;
-        private readonly int mTimerDelay;
-        private readonly bool mDryRun;
-        private readonly string mEnvironment;
-        private bool mPaused;
-        private bool mPendingChanges;
+        private readonly IComponent mRootComponent;
+        private bool mDisposed;
 
         public Application(Configuration config)
         {
             mConfiguration = config;
-
-            mDatabases = config.Databases;
-            mInvalidators = new List<IInvalidator>();
-            mBranchComponents = new Dictionary<string, IComponent>();
-            mDelayTimer = new Timer(OnTimerTick);
-            mTimerDelay = config.ExecutionDelay;
-
-            var fsInvalidator = new FileSystemWatcherInvalidator();
-            mInvalidators.Add(fsInvalidator);
-
-            mDependencyGraph = CreateDependencyGraph(config, fsInvalidator);
-
-            foreach (var invalidator in mInvalidators)
-            {
-                invalidator.Invalidated += OnInvalidated;
-            }
-
-            mActiveBranch = config.ActiveBranch;
-            mBackupBranch = config.BackupBranch;
-            mDryRun = config.DryRun;
-            mEnvironment = config.Environment;
-
-            mPaused = config.PauseAtStartup;
-            mPendingChanges = false;
+            mRootComponent = new DeployComponent(CreateBranchGraph(config), config.BackupBranch, config.ActiveBranch, config.Databases);
         }
 
-        private IStatefulDependencyGraph<IComponent> CreateDependencyGraph(Configuration config, FileSystemWatcherInvalidator fsInvalidator)
+        public void Start()
         {
-            var fullGraph = new StatefulDependencyGraph<IComponent>();
+            Console.WriteLine("Awaiting commands...");
+            BeginConsoleInput();
+        }
 
-            foreach (var branchInfo in config.Branches)
-            {
-                var branchComponent = CreateBranchComponent(branchInfo, config.DatabaseConnections[0], fsInvalidator);
-                mBranchComponents[branchInfo.Name] = branchComponent;
-            }
+        private IDependencyGraph<BranchInfo> CreateBranchGraph(Configuration config)
+        {
+            var branchesByName = config.Branches.ToDictionary(x => x.Name);
+            var graph = new DependencyGraph<BranchInfo>();
 
             foreach (var branchInfo in config.Branches)
             {
                 if (branchInfo.Parent != null)
                 {
-                    var source = mBranchComponents[branchInfo.Parent];
-                    var target = mBranchComponents[branchInfo.Name];
-                    fullGraph.AddDependency(source, target);
+                    var source = branchesByName[branchInfo.Parent];
+                    var target = branchesByName[branchInfo.Name];
+                    graph.AddDependency(source, target);
                 }
                 else
                 {
-                    fullGraph.AddNode(mBranchComponents[branchInfo.Name]);
+                    graph.AddNode(branchesByName[branchInfo.Name]);
                 }
             }
 
-            return fullGraph;
-        }
-
-        private static IComponent CreateBranchComponent(BranchInfo branchInfo, DatabaseConnectionInfo dbConnectionInfo, FileSystemWatcherInvalidator fsInvalidator)
-        {
-            var graph = new DependencyGraph<IComponent>();
-            var component = new SuperComponent(graph);
-
-            var componentIn = new BranchComponent(branchInfo.Name, "Begin");
-            var componentOut = new BranchComponent(branchInfo.Name, "End");
-
-            IComponent parent = componentIn;
-            if (Directory.Exists(branchInfo.BasePath))
-            {
-                var toDeployDirs = Directory.EnumerateDirectories(branchInfo.BasePath)
-                    .Where(x => ToDeployRegex.IsMatch(Path.GetFileName(x)));
-
-                foreach (var deployDir in toDeployDirs)
-                {
-                    var releaseComponent = CreateReleaseComponent(deployDir, branchInfo.DeployPath, dbConnectionInfo);
-
-                    fsInvalidator.AddWatch(deployDir, @"^Templates\\TPL_\d+.*$", component);
-                    fsInvalidator.AddWatch(deployDir, @"^Reports\\[XTD]_\d+.*\.x(?:lsm|ml)$", component);
-                    fsInvalidator.AddWatch(deployDir, @"^Scripts\\\d+\..*\.sql$", component);
-
-                    graph.AddDependency(parent, releaseComponent);
-                    parent = releaseComponent;
-                }
-            }
-            graph.AddDependency(parent, componentOut);
-
-            return component;
-        }
-
-        private static IComponent CreateReleaseComponent(string releaseDir, string deployPath, DatabaseConnectionInfo dbConnectionInfo)
-        {
-            var releaseName = Path.GetFileName(releaseDir);
-
-            var graph = new DependencyGraph<IComponent>();
-            var component = new SuperComponent(graph);
-
-            var componentIn = new ReleaseComponent(releaseName, "Begin");
-            var componentOut = new ReleaseComponent(releaseName, "End");
-
-            var tplComponent = new TemplatesComponent(Path.Combine(releaseDir, "Templates"), deployPath);
-            var reportsComponent = new ReportsComponent(Path.Combine(releaseDir, "Reports"), deployPath);
-            var scriptsComponent = new ScriptsComponent(Path.Combine(releaseDir, "Scripts"), deployPath, releaseName, dbConnectionInfo);
-
-            graph.AddDependency(componentIn, tplComponent);
-            graph.AddDependency(componentIn, reportsComponent);
-            graph.AddDependency(tplComponent, scriptsComponent);
-            graph.AddDependency(reportsComponent, scriptsComponent);
-            graph.AddDependency(scriptsComponent, componentOut);
-
-            return component;
-        }
-
-        private void OnTimerTick(object state)
-        {
-            FireWorkOnMainThread(mEnvironment, false);
-        }
-
-        private static void RunOnMainThread(Action func)
-        {
-            Program.Post(func);
-        }
-
-        private void FireWorkOnMainThread(string environment, bool force)
-        {
-            lock (this)
-            {
-                RunOnMainThread(() => FireWork(environment, force));
-            }
-        }
-
-        private void FireWork(string environment, bool force)
-        {
-            try
-            {
-                if (mPaused && !force)
-                {
-                    return;
-                }
-
-                // Delay elapsed without modifications. DO IT!
-                Console.WriteLine("[{0:T}] Shit's going down!\n", DateTime.Now);
-                Beep("start");
-
-                var chain = mDependencyGraph.GetPath(mBranchComponents[mBackupBranch], mBranchComponents[mActiveBranch]).ToList();
-                if (chain.Count > 0)
-                {
-                    // Add RestoreDatabaseComponents
-                    var toRun = mDatabases.Select(x => new RestoreDatabaseComponent(x)).Union(chain);
-
-                    var s = new ComponentRunState(mDryRun, environment);
-                    foreach (var component in toRun)
-                    {
-                        foreach (var logLine in component.Run(s))
-                        {
-                            Console.WriteLine("[{0:T}] {1}", DateTime.Now, logLine);
-                            if (s.Error)
-                            {
-                                Console.WriteLine("[{0:T}] Blocking Errors Detected ):", DateTime.Now);
-                                Beep("error");
-
-                                return;
-                            }
-                        }
-
-                        //mDependencyGraph.Validate(component);
-                    }
-                }
-
-                Console.WriteLine("\n[{0:T}] Success!\n", DateTime.Now);
-                Beep("success");
-            }
-            finally
-            {
-                if (!mPaused)
-                {
-                    mPendingChanges = false;
-                }
-            }
-        }
-
-        private void OnInvalidated(object sender, InvalidatedEventsArgs args)
-        {
-            lock (this)
-            {
-                if (mPaused)
-                {
-                    mPendingChanges = true;
-                    return;
-                }
-
-                Console.WriteLine("[{0:T}] Changes detected... [{1}]", DateTime.Now, args.Reason);
-
-                foreach (var invalidatedComponent in args.InvalidatedComponents)
-                {
-                    mDependencyGraph.InvalidateGraph(invalidatedComponent);
-                }
-
-                mDelayTimer.Change(mTimerDelay, Timeout.Infinite);
-            }
-        }
-
-        public void Start()
-        {
-            BeginConsoleInput();
-        }
-
-        private async Task<string> ReadLineAsync()
-        {
-            return await Task.Run(() => Console.ReadLine());
+            return graph;
         }
 
         private async void BeginConsoleInput()
         {
-            while (true)
+            while (!mDisposed)
             {
-                var line = await ReadLineAsync();
-                OnConsoleInput(line);
+                try
+                {
+                    var line = await ConsoleUtils.ReadLineAsync(mCancellationTokenSource.Token);
+                    if (mDisposed)
+                        return;
+                    OnConsoleInput(line);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
             }
         }
 
@@ -260,21 +78,11 @@ namespace DBBranchManager
             var cmd = argv[0];
             switch (cmd.ToLower())
             {
-                case "pause":
-                case "p":
-                    Pause();
-                    break;
-
-                case "resume":
-                case "r":
-                    Resume();
-                    break;
-
                 case "force":
                 case "f":
                 {
-                    var env = argv.Length > 1 ? argv[1] : mEnvironment;
-                    FireWorkOnMainThread(env, true);
+                    var env = argv.Length > 1 ? argv[1] : mConfiguration.Environment;
+                    RunDeploy(env);
                     break;
                 }
 
@@ -283,81 +91,64 @@ namespace DBBranchManager
                     Program.Exit();
                     break;
 
-                case "generate-scripts":
+                case ActionConstants.GenerateScripts:
                 case "gs":
                 case "g":
                 {
-                    var env = argv.Length > 1 ? argv[1] : mEnvironment;
-                    GenerateScripts(env);
+                    var env = argv.Length > 1 ? argv[1] : mConfiguration.Environment;
+                    RunAction(ActionConstants.GenerateScripts, env);
                     break;
                 }
+
+                case ActionConstants.MakeReleasePackage:
+                case "rp":
+                {
+                    var env = argv.Length > 1 ? argv[1] : mConfiguration.Environment;
+                    RunAction(ActionConstants.MakeReleasePackage, env);
+                    break;
+                }
+
+                case "t":
+                    throw new Exception();
             }
         }
 
-        private void Pause()
+        private void RunDeploy(string environment)
         {
-            lock (this)
+            Program.Post(() =>
             {
-                Console.WriteLine("[{0:T}] Pausing...", DateTime.Now);
-                mPaused = true;
-            }
+                Console.WriteLine("[{0:T}] Shit's going down!\n", DateTime.Now);
+                Beep("start");
+
+                var runState = new ComponentRunContext(mConfiguration, environment);
+                if (RunComponent(ActionConstants.Deploy, runState))
+                    Beep("success");
+                else
+                    Beep("error");
+            });
         }
 
-        private void Resume()
+        private void RunAction(string action, string env)
         {
-            lock (this)
-            {
-                Console.WriteLine("[{0:T}] Resuming...", DateTime.Now);
-                mPaused = false;
-
-                if (mPendingChanges)
-                {
-                    Console.WriteLine("[{0:T}] Pending changes detected...", DateTime.Now);
-                    mDelayTimer.Change(mTimerDelay, Timeout.Infinite);
-                }
-            }
+            Program.Post(() => { RunComponent(action, new ComponentRunContext(mConfiguration, env)); });
         }
 
-        private void GenerateScriptsRecursive(IDependencyGraph<IComponent> graph, string environment)
+        private bool RunComponent(string action, ComponentRunContext runState)
         {
-            var chain = graph.GetPath();
+            Console.WriteLine("[{0:T}] Running '{1}' action", DateTime.Now, action);
 
-            foreach (var component in chain)
+            foreach (var log in mRootComponent.Run(action, runState))
             {
-                var asSuperComponent = component as SuperComponent;
-                if (asSuperComponent != null)
+                Console.WriteLine("[{0:T}] {1}{2}", DateTime.Now, new string(' ', runState.Depth * 2), log);
+                if (runState.Error)
                 {
-                    GenerateScriptsRecursive(asSuperComponent.Components, environment);
-                    continue;
-                }
-
-                var asScriptsComponent = component as ScriptsComponent;
-                if (asScriptsComponent != null)
-                {
-                    var scriptFile = Path.Combine(asScriptsComponent.DeployPath, asScriptsComponent.ReleaseName + @".sql");
-
-                    Console.WriteLine("[{0:T}] Generating {1}", DateTime.Now, scriptFile);
-
-                    var sb = new StringBuilder();
-                    foreach (var log in asScriptsComponent.GenerateScript(environment, sb))
-                    {
-                        Console.WriteLine("    {0}", log);
-                    }
-                    File.WriteAllText(scriptFile, sb.ToString());
+                    Console.WriteLine("[{0:T}] Blocking Errors Detected ):", DateTime.Now);
+                    return false;
                 }
             }
-        }
 
-        private void GenerateScripts(string environment)
-        {
-            lock (this)
-            {
-                var chain = mDependencyGraph.GetPath(mBranchComponents[mBackupBranch], mBranchComponents[mActiveBranch]).ToList();
-                foreach (var component in chain.OfType<SuperComponent>())
-                {
-                    GenerateScriptsRecursive(component.Components, environment);
-                }
-            }
+            Console.WriteLine("\n[{0:T}] Success!\n", DateTime.Now);
+            return true;
         }
 
         private void Beep(string reason)
@@ -367,6 +158,26 @@ namespace DBBranchManager
             {
                 Buzzer.Beep(beep.Frequency, beep.Duration, beep.Times, beep.DutyTime);
             }
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (mDisposed)
+                return;
+
+            if (disposing)
+            {
+                mCancellationTokenSource.Cancel();
+                mCancellationTokenSource.Dispose();
+            }
+
+            mDisposed = true;
         }
     }
 }

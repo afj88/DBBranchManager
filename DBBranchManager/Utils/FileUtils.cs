@@ -44,5 +44,24 @@ namespace DBBranchManager.Utils
                 .Where(x => filter(x.FileName))
                 .OrderBy(x => x.FileName, new NaturalSortComparer());
         }
+
+        public static void DeleteDirectory(string directory)
+        {
+            var dir = new DirectoryInfo(directory);
+            RemoveReadOnlyRecursive(dir);
+            dir.Delete(true);
+        }
+
+        private static void RemoveReadOnlyRecursive(DirectoryInfo dir)
+        {
+            foreach (var subDirectory in dir.GetDirectories())
+            {
+                RemoveReadOnlyRecursive(subDirectory);
+            }
+            foreach (var fileInfo in dir.GetFiles())
+            {
+                fileInfo.Attributes &= ~FileAttributes.ReadOnly;
+            }
+        }
     }
 }

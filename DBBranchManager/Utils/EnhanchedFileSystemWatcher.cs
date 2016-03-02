@@ -20,10 +20,11 @@ namespace DBBranchManager.Utils
         public IReadOnlyCollection<object> AffectedItems { get; private set; }
     }
 
-    public class EnhanchedFileSystemWatcher
+    public class EnhanchedFileSystemWatcher : IDisposable
     {
         private readonly Dictionary<string, FileSystemWatcher> mWatchersByDir;
         private readonly Dictionary<string, List<ItemInfo>> mItemsByDir;
+        private bool mDisposed;
 
         private class ItemInfo
         {
@@ -230,6 +231,34 @@ namespace DBBranchManager.Utils
             }
 
             return new PathData(string.Format("{0}{1}", Path.GetDirectoryName(path), Path.DirectorySeparatorChar), fileName, true);
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (mDisposed)
+                return;
+
+            if (disposing)
+            {
+                foreach (var watcher in mWatchersByDir.Values)
+                {
+                    watcher.Changed -= OnChanged;
+                    watcher.Created -= OnCreated;
+                    watcher.Deleted -= OnDeleted;
+                    watcher.Error -= OnError;
+                    watcher.Dispose();
+                }
+                mWatchersByDir.Clear();
+                mItemsByDir.Clear();
+            }
+
+            mDisposed = true;
         }
     }
 }

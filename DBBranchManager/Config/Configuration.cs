@@ -1,8 +1,8 @@
-﻿using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace DBBranchManager.Config
 {
@@ -11,17 +11,18 @@ namespace DBBranchManager.Config
         public List<DatabaseConnectionInfo> DatabaseConnections { get; set; }
         public List<DatabaseInfo> Databases { get; set; }
         public List<BranchInfo> Branches { get; set; }
+        public string ReleasePackagesPath { get; set; }
+        public string ScriptsPath { get; set; }
         public string ActiveBranch { get; set; }
         public string BackupBranch { get; set; }
         public int ExecutionDelay { get; set; }
         public bool DryRun { get; set; }
         public string Environment { get; set; }
-        public bool PauseAtStartup { get; set; }
         public Dictionary<string, BeepInfo> Beeps { get; set; }
 
         public static Configuration LoadFromJson(string path)
         {
-            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read))
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
             using (var reader = new StreamReader(fs))
             using (var jReader = new JsonTextReader(reader))
             {
@@ -51,12 +52,13 @@ namespace DBBranchManager.Config
                         Parent = (string)x.Value["parent"],
                         DeployPath = (string)x.Value["deployPath"]
                     }).ToList(),
+                    ReleasePackagesPath = (string)jConfig["releasePackagesPath"],
+                    ScriptsPath = (string)jConfig["scriptsPath"] ?? (string)jConfig["releasePackagesPath"],
                     ActiveBranch = (string)jConfig["activeBranch"],
                     BackupBranch = (string)jConfig["backupBranch"],
                     ExecutionDelay = (int?)jConfig["executionDelay"] ?? 3000,
                     DryRun = (bool)jConfig["dryRun"],
                     Environment = (string)jConfig["environment"] ?? "dev",
-                    PauseAtStartup = (bool?)jConfig["pauseAtStartup"] ?? true,
                     Beeps = jConfig["beeps"].OfType<JProperty>().ToDictionary(x => x.Name, x => new BeepInfo(
                         (int?)x.Value["frequency"] ?? 800,
                         (int?)x.Value["length"] ?? 250,

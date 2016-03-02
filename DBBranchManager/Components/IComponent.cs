@@ -1,22 +1,69 @@
 ﻿using System.Collections.Generic;
+using DBBranchManager.Config;
 
 namespace DBBranchManager.Components
 {
-    internal class ComponentRunState
+    internal class ComponentRunContext
     {
-        public ComponentRunState(bool dryRun, string environment)
+        private readonly Configuration mConfig;
+        private readonly string mEnvironment;
+        private bool mError;
+        private int mDepth;
+
+        public ComponentRunContext(Configuration config) :
+            this(config, config.Environment)
         {
-            DryRun = dryRun;
-            Environment = environment;
         }
 
-        public bool DryRun { get; private set; }
-        public string Environment { get; private set; }
-        public bool Error { get; set; }
+        public ComponentRunContext(Configuration config, string environment)
+        {
+            mConfig = config;
+            mEnvironment = environment;
+        }
+
+        public Configuration Config
+        {
+            get { return mConfig; }
+        }
+
+        public bool DryRun
+        {
+            get { return mConfig.DryRun; }
+        }
+
+        public string Environment
+        {
+            get { return mEnvironment; }
+        }
+
+        public bool Error
+        {
+            get { return mError; }
+        }
+
+        public int Depth
+        {
+            get { return mDepth; }
+        }
+
+        public void SetError()
+        {
+            mError = true;
+        }
+
+        public void IncreaseDepth()
+        {
+            ++mDepth;
+        }
+
+        public void DecreaseDepth()
+        {
+            --mDepth;
+        }
     }
 
     internal interface IComponent
     {
-        IEnumerable<string> Run(ComponentRunState runState);
+        IEnumerable<string> Run(string action, ComponentRunContext runContext);
     }
 }

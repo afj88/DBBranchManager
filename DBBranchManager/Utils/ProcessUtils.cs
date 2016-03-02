@@ -1,86 +1,182 @@
 ﻿using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
-using System.Threading;
 
 namespace DBBranchManager.Utils
 {
-    public class ProcessExecutionResult
+    public class ProcessOutputLine
     {
-        public ProcessExecutionResult(string standardOutput, string standardError, int exitCode)
+        public enum OutputTypeEnum
         {
-            StandardOutput = standardOutput;
-            StandardError = standardError;
-            ExitCode = exitCode;
+            StandardOutput,
+            StandardError
         }
 
-        public string StandardOutput { get; private set; }
-        public string StandardError { get; private set; }
-        public int ExitCode { get; private set; }
+        public ProcessOutputLine(OutputTypeEnum outputType, string line)
+        {
+            OutputType = outputType;
+            Line = line;
+        }
+
+        public OutputTypeEnum OutputType { get; private set; }
+        public string Line { get; private set; }
+    }
+
+    public interface IProcessExecutionResult : IDisposable
+    {
+        IEnumerable<ProcessOutputLine> GetOutput();
+
+        string StandardOutput { get; }
+        string StandardError { get; }
+
+        int ExitCode { get; }
     }
 
     internal static class ProcessUtils
     {
-        public static ProcessExecutionResult Exec(string file, string args, Stream input)
+        public static IProcessExecutionResult Exec(string file, string args, Stream input)
         {
-            const int timeout = int.MaxValue;
-            using (var p = new Process())
+            return new ProcessExecutionResult(file, args, input);
+        }
+
+
+        private class ProcessExecutionResult : IProcessExecutionResult
+        {
+            private readonly Process mProcess;
+            private readonly StringBuilder mStandardOutput;
+            private readonly StringBuilder mStandardError;
+            private bool mOutputFinished;
+            private bool mErrorFinished;
+            private readonly BlockingCollection<ProcessOutputLine> mOutput;
+            private bool mDisposed;
+
+
+            public ProcessExecutionResult(string file, string args, Stream input)
             {
-                p.StartInfo = new ProcessStartInfo(file, args)
+                mProcess = new Process
                 {
-                    UseShellExecute = false,
-                    RedirectStandardInput = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true
+                    StartInfo = new ProcessStartInfo(file, args)
+                    {
+                        UseShellExecute = false,
+                        RedirectStandardInput = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    }
                 };
 
-                var output = new StringBuilder();
-                var error = new StringBuilder();
+                mStandardOutput = new StringBuilder();
+                mStandardError = new StringBuilder();
+                mOutput = new BlockingCollection<ProcessOutputLine>();
 
-                using (var outputWaitHandle = new AutoResetEvent(false))
-                using (var errorWaitHandle = new AutoResetEvent(false))
+                mProcess.OutputDataReceived += OnOutputReceived;
+                mProcess.ErrorDataReceived += OnErrorReceived;
+
+                mProcess.Start();
+
+                mProcess.BeginOutputReadLine();
+                mProcess.BeginErrorReadLine();
+
+                input.CopyTo(mProcess.StandardInput.BaseStream);
+                mProcess.StandardInput.BaseStream.Flush();
+            }
+
+            #region IProcessExecutionResult
+
+            public IEnumerable<ProcessOutputLine> GetOutput()
+            {
+                return mOutput.GetConsumingEnumerable();
+            }
+
+            public string StandardOutput
+            {
+                get { return mStandardOutput.ToString(); }
+            }
+
+            public string StandardError
+            {
+                get { return mStandardError.ToString(); }
+            }
+
+            public int ExitCode
+            {
+                get { return mProcess.ExitCode; }
+            }
+
+            #endregion
+
+            #region IDisposable
+
+            public void Dispose()
+            {
+                Dispose(true);
+                GC.SuppressFinalize(this);
+            }
+
+            private void Dispose(bool disposing)
+            {
+                if (mDisposed)
+                    return;
+
+                if (disposing)
                 {
-                    p.OutputDataReceived += (sender, e) =>
+                    mProcess.Dispose();
+                    mOutput.Dispose();
+                }
+
+                mDisposed = true;
+            }
+
+            #endregion
+
+            private void OnOutputReceived(object sender, DataReceivedEventArgs e)
+            {
+                if (e.Data == null)
+                {
+                    lock (this)
                     {
-                        if (e.Data == null)
-                        {
-                            outputWaitHandle.Set();
-                        }
-                        else
-                        {
-                            output.AppendLine(e.Data);
-                            //Console.WriteLine(e.Data);
-                        }
-                    };
-                    p.ErrorDataReceived += (sender, e) =>
-                    {
-                        if (e.Data == null)
-                        {
-                            errorWaitHandle.Set();
-                        }
-                        else
-                        {
-                            error.AppendLine(e.Data);
-                            Console.WriteLine(e.Data);
-                        }
-                    };
-
-                    p.Start();
-
-                    p.BeginOutputReadLine();
-                    p.BeginErrorReadLine();
-
-                    input.CopyTo(p.StandardInput.BaseStream);
-                    p.StandardInput.BaseStream.Flush();
-
-                    if (p.WaitForExit(timeout) &&
-                        outputWaitHandle.WaitOne(timeout) &&
-                        errorWaitHandle.WaitOne(timeout))
-                    {
-                        return new ProcessExecutionResult(output.ToString(), error.ToString(), p.ExitCode);
+                        mOutputFinished = true;
+                        mProcess.OutputDataReceived -= OnOutputReceived;
                     }
-                    throw new TimeoutException("Process timed out");
+                    MaybeComplete();
+                }
+                else
+                {
+                    mOutput.Add(new ProcessOutputLine(ProcessOutputLine.OutputTypeEnum.StandardOutput, e.Data));
+                }
+            }
+
+            private void OnErrorReceived(object sender, DataReceivedEventArgs e)
+            {
+                if (e.Data == null)
+                {
+                    lock (this)
+                    {
+                        mErrorFinished = true;
+                        mProcess.ErrorDataReceived -= OnErrorReceived;
+                    }
+                    MaybeComplete();
+                }
+                else
+                {
+                    mOutput.Add(new ProcessOutputLine(ProcessOutputLine.OutputTypeEnum.StandardError, e.Data));
+                }
+            }
+
+            private void MaybeComplete()
+            {
+                lock (this)
+                {
+                    if (mOutputFinished && mErrorFinished)
+                    {
+                        if (!mProcess.HasExited)
+                        {
+                            mProcess.WaitForExit();
+                        }
+                        mOutput.CompleteAdding();
+                    }
                 }
             }
         }
