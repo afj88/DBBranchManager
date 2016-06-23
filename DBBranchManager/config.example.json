@@ -3,7 +3,9 @@
     "localhost": {
       "server": "localhost",
       "user": "sa",
-      "password": "xxxxx"
+      "password": "xxxxx",
+      "relocatePath": "D:\\Databases",
+      "relocate": true
     }
   },
   "databases": {
@@ -20,25 +22,11 @@
     "Main": {
       "basePath": "D:\\Aviva\\EV\\Solvency2\\Main"
     },
-    "5.8.0": {
-      "parent": "Main",
-      "basePath": "D:\\Aviva\\EV\\Solvency2\\Releases\\Release 5.8.0",
-      "deployPath": "E:\\ScriptsSII\\5.8.0"
-    },
-    "5.8.1": {
-      "parent": "5.8.0",
-      "basePath": "D:\\Aviva\\EV\\Solvency2\\Releases\\Release 5.8.0\\Release 5.8.1",
-      "deployPath": "E:\\ScriptsSII\\5.8.1"
-    },
-    "5.9.1": {
-      "parent": "Main",
-      "basePath": "D:\\Aviva\\EV\\Solvency2\\Releases\\Release 5.9.1",
-      "deployPath": "E:\\ScriptsSII\\5.9.1"
-    },
     "6.1.0": {
       "parent": "Main",
       "basePath": "D:\\Aviva\\EV\\Solvency2\\Releases\\Release 6.1.0",
-      "deployPath": "E:\\ScriptsSII\\6.1.0"
+      "deployPath": "E:\\ScriptsSII\\6.1.0",
+      "releasesToSkip": [ "to_deploy 6.3.0.1" ]
     }
   },
   "releasePackagesPath": "E:\\Packages\\",

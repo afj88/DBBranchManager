@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Newtonsoft.Json;
@@ -15,7 +16,6 @@ namespace DBBranchManager.Config
         public string ScriptsPath { get; set; }
         public string ActiveBranch { get; set; }
         public string BackupBranch { get; set; }
-        public int ExecutionDelay { get; set; }
         public bool DryRun { get; set; }
         public string Environment { get; set; }
         public Dictionary<string, BeepInfo> Beeps { get; set; }
@@ -33,30 +33,38 @@ namespace DBBranchManager.Config
                     Name = x.Name,
                     Server = (string)x.Value["server"],
                     User = (string)x.Value["user"],
-                    Password = (string)x.Value["password"]
+                    Password = (string)x.Value["password"],
+                    RelocatePath = (string)x.Value["relocatePath"],
+                    Relocate = (bool?)x.Value["relocate"] ?? false
                 });
 
                 return new Configuration
                 {
                     DatabaseConnections = dbcs.Values.ToList(),
-                    Databases = jConfig["databases"].OfType<JProperty>().Select(x => new DatabaseInfo
+                    Databases = jConfig["databases"].OfType<JProperty>().Select(x =>
                     {
-                        Name = x.Name,
-                        Connection = dbcs[(string)x.Value["connection"]],
-                        BackupFilePath = (string)x.Value["backupFilePath"]
+                        var connection = dbcs[(string)x.Value["connection"]];
+                        return new DatabaseInfo
+                        {
+                            Name = x.Name,
+                            Connection = connection,
+                            BackupFilePath = (string)x.Value["backupFilePath"],
+                            RelocatePath = (string)x.Value["relocatePath"] ?? connection.RelocatePath,
+                            Relocate = (bool?)x.Value["relocate"] ?? connection.Relocate
+                        };
                     }).ToList(),
                     Branches = jConfig["branches"].OfType<JProperty>().Select(x => new BranchInfo
                     {
                         Name = x.Name,
                         BasePath = (string)x.Value["basePath"],
                         Parent = (string)x.Value["parent"],
-                        DeployPath = (string)x.Value["deployPath"]
+                        DeployPath = (string)x.Value["deployPath"],
+                        ReleasesToSkip = ToArray<string>(x.Value["releasesToSkip"])
                     }).ToList(),
                     ReleasePackagesPath = (string)jConfig["releasePackagesPath"],
                     ScriptsPath = (string)jConfig["scriptsPath"] ?? (string)jConfig["releasePackagesPath"],
                     ActiveBranch = (string)jConfig["activeBranch"],
                     BackupBranch = (string)jConfig["backupBranch"],
-                    ExecutionDelay = (int?)jConfig["executionDelay"] ?? 3000,
                     DryRun = (bool)jConfig["dryRun"],
                     Environment = (string)jConfig["environment"] ?? "dev",
                     Beeps = jConfig["beeps"].OfType<JProperty>().ToDictionary(x => x.Name, x => new BeepInfo(
@@ -66,6 +74,11 @@ namespace DBBranchManager.Config
                         (float?)x.Value["dutyTime"] ?? 1))
                 };
             }
+        }
+
+        private static T[] ToArray<T>(JToken token)
+        {
+            return token == null ? new T[0] : token.Select(x => x.Value<T>()).ToArray();
         }
     }
 

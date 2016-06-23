@@ -7,6 +7,7 @@ namespace DBBranchManager.Components
     {
         private readonly Configuration mConfig;
         private readonly string mEnvironment;
+        private readonly bool mSkipRestore;
         private bool mError;
         private int mDepth;
 
@@ -15,10 +16,11 @@ namespace DBBranchManager.Components
         {
         }
 
-        public ComponentRunContext(Configuration config, string environment)
+        public ComponentRunContext(Configuration config, string environment, bool skipRestore = false)
         {
             mConfig = config;
             mEnvironment = environment;
+            mSkipRestore = skipRestore;
         }
 
         public Configuration Config
@@ -34,6 +36,11 @@ namespace DBBranchManager.Components
         public string Environment
         {
             get { return mEnvironment; }
+        }
+
+        public bool SkipRestore
+        {
+            get { return mSkipRestore; }
         }
 
         public bool Error

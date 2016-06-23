@@ -24,9 +24,19 @@ namespace DBBranchManager.Components
 
         protected override IEnumerable<IComponent> GetComponentsToRun(string action, ComponentRunContext runContext)
         {
-            foreach (var databaseInfo in mDatabasesInfos)
+            if (runContext.SkipRestore)
             {
-                yield return new RestoreDatabaseComponent(databaseInfo);
+                foreach (var databaseInfo in mDatabasesInfos)
+                {
+                    yield return new LogComponent(string.Format("Restore {0}: Skipped", databaseInfo.Name));
+                }
+            }
+            else
+            {
+                foreach (var databaseInfo in mDatabasesInfos)
+                {
+                    yield return new RestoreDatabaseComponent(databaseInfo);
+                }
             }
 
             foreach (var branchInfo in mBranchGraph.GetPath(mBackupBranch, mActiveBranch))
