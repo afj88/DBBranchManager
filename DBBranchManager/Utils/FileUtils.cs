@@ -45,6 +45,14 @@ namespace DBBranchManager.Utils
                 .OrderBy(x => x.FileName, new NaturalSortComparer());
         }
 
+        public static IEnumerable<FileData> EnumerateDirectories2(string path, Func<string, bool> filter)
+        {
+            return Directory.EnumerateDirectories(path)
+                .Select(x => new FileData(x))
+                .Where(x => filter(x.FileName))
+                .OrderBy(x => x.FileName, new NaturalSortComparer());
+        }
+
         public static void DeleteDirectory(string directory)
         {
             var dir = new DirectoryInfo(directory);

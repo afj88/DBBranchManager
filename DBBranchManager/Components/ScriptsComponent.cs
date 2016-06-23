@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using DBBranchManager.Config;
 using DBBranchManager.Constants;
 using DBBranchManager.Utils;
+using DBBranchManager.Utils.Sql;
 
 namespace DBBranchManager.Components
 {
@@ -121,21 +122,20 @@ namespace DBBranchManager.Components
 
         private IEnumerable<string> GenerateScript(string environment, StringBuilder sb, bool commit, object scriptsPath)
         {
-            sb.AppendFormat(@"
-:on error exit
-:setvar path ""{0}""
-
-USE [DB_AVIVA_S2]
-GO
-
-SET XACT_ABORT ON
-GO
-
-BEGIN TRANSACTION
-GO
-
-TRUNCATE TABLE [Interdependencies].[TBC_CACHE_ITEM_DEPENDENCY]
-", scriptsPath);
+            sb.AppendFormat(":on error exit\n" +
+                            ":setvar path \"{0}\"\n" +
+                            "\n" +
+                            "USE [DB_AVIVA_S2]\n" +
+                            "GO\n" +
+                            "\n" +
+                            "SET XACT_ABORT ON\n" +
+                            "GO\n" +
+                            "\n" +
+                            "BEGIN TRANSACTION\n" +
+                            "GO\n" +
+                            "\n" +
+                            "TRUNCATE TABLE [Interdependencies].[TBC_CACHE_ITEM_DEPENDENCY]\n",
+                scriptsPath);
 
             var filter = GetScriptsFilterByEnvironment(environment);
             foreach (var file in FileUtils.EnumerateFiles(mScriptsPath, ScriptFileRegex.IsMatch))

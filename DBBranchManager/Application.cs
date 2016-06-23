@@ -81,8 +81,21 @@ namespace DBBranchManager
                 case "force":
                 case "f":
                 {
-                    var env = argv.Length > 1 ? argv[1] : mConfiguration.Environment;
-                    RunDeploy(env);
+                    string env = null;
+                    var skipRestore = false;
+                    for (var i = 1; i < argv.Length; ++i)
+                    {
+                        var arg = argv[i];
+                        if (arg == "-s" || arg == "--skip-restore")
+                            skipRestore = true;
+                        else if (env == null)
+                            env = arg;
+                    }
+
+                    if (env == null)
+                        env = mConfiguration.Environment;
+
+                    RunDeploy(env, skipRestore);
                     break;
                 }
 
@@ -113,14 +126,14 @@ namespace DBBranchManager
             }
         }
 
-        private void RunDeploy(string environment)
+        private void RunDeploy(string environment, bool skipRestore)
         {
             Program.Post(() =>
             {
                 Console.WriteLine("[{0:T}] Shit's going down!\n", DateTime.Now);
                 Beep("start");
 
-                var runState = new ComponentRunContext(mConfiguration, environment);
+                var runState = new ComponentRunContext(mConfiguration, environment, skipRestore);
                 if (RunComponent(ActionConstants.Deploy, runState))
                     Beep("success");
                 else

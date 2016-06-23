@@ -1,8 +1,10 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using DBBranchManager.Config;
+using DBBranchManager.Utils;
 
 namespace DBBranchManager.Components
 {
@@ -24,12 +26,19 @@ namespace DBBranchManager.Components
         {
             if (Directory.Exists(mBranchInfo.BasePath))
             {
-                var toDeployDirs = Directory.EnumerateDirectories(mBranchInfo.BasePath)
-                    .Where(x => ToDeployRegex.IsMatch(Path.GetFileName(x)));
+                var toSkip = new HashSet<string>(mBranchInfo.ReleasesToSkip, StringComparer.OrdinalIgnoreCase);
+                var toDeployDirs = FileUtils.EnumerateDirectories2(mBranchInfo.BasePath, ToDeployRegex.IsMatch);
 
                 foreach (var toDeployDir in toDeployDirs)
                 {
-                    yield return new ReleaseComponent(mBranchInfo, toDeployDir, mDbConnection);
+                    if (toSkip.Contains(toDeployDir.FileName))
+                    {
+                        yield return new LogComponent(string.Format("Release '{0}': Skipped", toDeployDir.FileName));
+                    }
+                    else
+                    {
+                        yield return new ReleaseComponent(mBranchInfo, toDeployDir.FullPath, mDbConnection);
+                    }
                 }
             }
         }
